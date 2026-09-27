@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>GIWA WETH Wrapper</title>
+</head>
+
+<body>
+  <h2>GIWA Sepolia — Wrap ETH → WETH</h2>
+
+  <button id="connect">Connect MetaMask</button>
+  <button id="wrap" disabled>Wrap 0.0015 ETH</button>
+
+  <pre id="status"></pre>
+
+  <script type="module">
+    import {
+      createWalletClient,
+      createPublicClient,
+      custom,
+      http,
+      parseEther,
+      formatEther,
+      getAddress
+    } from 'https://esm.sh/viem@2.56.8'
+
+    const WETH =
+      '0x4200000000000000000000000000000000000006'
+
+    const RPC =
+      'https://sepolia-rpc.giwa.io'
+
+    const CHAIN = {
+      id: 91342,
+      name: 'GIWA Sepolia',
+      nativeCurrency: {
+        name: 'Ether',
+        symbol: 'ETH',
+        decimals: 18
+      },
+      rpcUrls: {
+        default: {
+          http: [RPC]
+        }
+      }
+    }
+
+    const connectBtn = document.getElementById('connect')
+    const wrapBtn = document.getElementById('wrap')
+    const status = document.getElementById('status')
+
+    let walletClient
+    let publicClient
+    let account
+
+    function log(message) {
+      status.textContent += message + '\n'
+    }
+
+    connectBtn.onclick = async () => {
+      try {
+        if (!window.ethereum) {
+          throw new Error('MetaMask tidak ditemukan.')
+        }
+
+        walletClient = createWalletClient({
+          chain: CHAIN,
+          transport: custom(window.ethereum)
+        })
+
+        publicClient = createPublicClient({
+          chain: CHAIN,
+          transport: http(RPC)
+        })
+
+        const [address] =
+          await walletClient.requestAddresses()
+
+        account = getAddress(address)
+
+        log('Wallet: ' + account)
+
+        const chainId =
+          await walletClient.getChainId()
+
+        log('Chain ID: ' + chainId)
+
+        if (chainId !== 91342) {
+          throw new Error(
+            'MetaMask belum berada di GIWA Sepolia.'
+          )
+        }
+
+        const balance =
+          await publicClient.getBalance({
+            address: account
+          })
+
+        log(
+          'ETH balance: ' +
+          formatEther(balance) +
+          ' ETH'
+        )
+
+        log('✅ GIWA Sepolia terdeteksi.')
+        log('✅ Wallet terhubung.')
+
+        wrapBtn.disabled = false
+
+      } catch (err) {
+        console.error(err)
+
+        log(
+          '❌ ' +
+          (err.shortMessage || err.message)
+        )
+      }
+    }
+
+    wrapBtn.onclick = async () => {
+      try {
+        wrapBtn.disabled = true
+
+        log('')
+        log('Menyiapkan transaksi...')
+        log('To: ' + WETH)
+        log('Value: 0.0015 ETH')
+        log('Function: deposit()')
+
+        const hash =
+          await walletClient.writeContract({
+            account,
+            address: WETH,
+            abi: [
+              {
+                type: 'function',
+                name: 'deposit',
+                inputs: [],
+                outputs: [],
+                stateMutability: 'payable'
+              }
+            ],
+            functionName: 'deposit',
+            value: parseEther('0.0015')
+          })
+
+        log('')
+        log('✅ Transaksi dikirim:')
+        log(hash)
+
+        log('')
+        log('Menunggu konfirmasi...')
+
+        const receipt =
+          await publicClient.waitForTransactionReceipt({
+            hash
+          })
+
+        log('')
+        log(
+          'Status: ' +
+          receipt.status
+        )
+
+        if (receipt.status === 'success') {
+          log('✅ WRAP BERHASIL!')
+          log('0.0015 ETH → WETH')
+        } else {
+          log('❌ Transaksi gagal.')
+        }
+
+      } catch (err) {
+        console.error(err)
+
+        log(
+          '❌ ' +
+          (err.shortMessage || err.message)
+        )
+
+        wrapBtn.disabled = false
+      }
+    }
+  </script>
+</body>
+</html>

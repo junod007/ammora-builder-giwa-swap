@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Approve WETH - Ammora</title>
+</head>
+<body>
+  <h2>Approve WETH → Ammora Pool</h2>
+
+  <button id="connect">Connect MetaMask</button>
+  <button id="approve" disabled>Approve 0.001 WETH</button>
+
+  <pre id="status"></pre>
+
+  <script type="module">
+    import {
+      createWalletClient,
+      createPublicClient,
+      custom,
+      http,
+      parseEther,
+      formatEther,
+      getAddress
+    } from 'https://esm.sh/viem@2.56.8'
+
+    const RPC = 'https://sepolia-rpc.giwa.io'
+
+    const WETH =
+      '0x4200000000000000000000000000000000000006'
+
+    const POOL =
+      '0x253c3e5519ed19a1b0eda86ce7676fa973157830'
+
+    const CHAIN = {
+      id: 91342,
+      name: 'GIWA Sepolia',
+      nativeCurrency: {
+        name: 'Ether',
+        symbol: 'ETH',
+        decimals: 18
+      },
+      rpcUrls: {
+        default: {
+          http: [RPC]
+        }
+      }
+    }
+
+    const ERC20_ABI = [
+      {
+        type: 'function',
+        name: 'approve',
+        inputs: [
+          { name: 'spender', type: 'address' },
+          { name: 'amount', type: 'uint256' }
+        ],
+        outputs: [
+          { name: '', type: 'bool' }
+        ],
+        stateMutability: 'nonpayable'
+      },
+      {
+        type: 'function',
+        name: 'allowance',
+        inputs: [
+          { name: 'owner', type: 'address' },
+          { name: 'spender', type: 'address' }
+        ],
+        outputs: [
+          { name: '', type: 'uint256' }
+        ],
+        stateMutability: 'view'
+      }
+    ]
+
+    const connectBtn = document.getElementById('connect')
+    const approveBtn = document.getElementById('approve')
+    const status = document.getElementById('status')
+
+    let walletClient
+    let publicClient
+    let account
+
+    function log(message) {
+      status.textContent += message + '\n'
+    }
+
+    connectBtn.onclick = async () => {
+      try {
+        if (!window.ethereum) {
+          throw new Error('MetaMask tidak ditemukan.')
+        }
+
+        walletClient = createWalletClient({
+          chain: CHAIN,
+          transport: custom(window.ethereum)
+        })
+
+        publicClient = createPublicClient({
+          chain: CHAIN,
+          transport: http(RPC)
+        })
+
+        const [address] =
+          await walletClient.requestAddresses()
+
+        account = getAddress(address)
+
+        const chainId =
+          await walletClient.getChainId()
+
+        log('Wallet: ' + account)
+        log('Chain ID: ' + chainId)
+
+        if (chainId !== 91342) {
+          throw new Error('MetaMask belum di GIWA Sepolia.')
+        }
+
+        const allowance =
+          await publicClient.readContract({
+            address: WETH,
+            abi: ERC20_ABI,
+            functionName: 'allowance',
+            args: [account, POOL]
+          })
+
+        log(
+          'Current allowance: ' +
+          formatEther(allowance) +
+          ' WETH'
+        )
+
+        log('Pool spender: ' + POOL)
+        log('✅ GIWA Sepolia terdeteksi.')
+        approveBtn.disabled = false
+
+      } catch (err) {
+        console.error(err)
+        log(
+          '❌ ' +
+          (err.shortMessage || err.message)
+        )
+      }
+    }
+
+    approveBtn.onclick = async () => {
+      try {
+        approveBtn.disabled = true
+
+        const amount = parseEther('0.001')
+
+        log('')
+        log('Menyiapkan approval...')
+        log('Token: WETH')
+        log('Amount: 0.001 WETH')
+        log('Spender: ' + POOL)
+
+        const hash =
+          await walletClient.writeContract({
+            account,
+            address: WETH,
+            abi: ERC20_ABI,
+            functionName: 'approve',
+            args: [POOL, amount]
+          })
+
+        log('')
+        log('✅ Approval transaction dikirim:')
+        log(hash)
+
+        log('')
+        log('Menunggu konfirmasi...')
+
+        const receipt =
+          await publicClient.waitForTransactionReceipt({
+            hash
+          })
+
+        log('Status: ' + receipt.status)
+
+        if (receipt.status === 'success') {
+          const allowance =
+            await publicClient.readContract({
+              address: WETH,
+              abi: ERC20_ABI,
+              functionName: 'allowance',
+              args: [account, POOL]
+            })
+
+          log('')
+          log('✅ APPROVAL BERHASIL!')
+          log(
+            'Allowance sekarang: ' +
+            formatEther(allowance) +
+            ' WETH'
+          )
+        }
+
+      } catch (err) {
+        console.error(err)
+
+        log(
+          '❌ ' +
+          (err.shortMessage || err.message)
+        )
+
+        approveBtn.disabled = false
+      }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Ammora WETH → AUICMP Swap</title>
+</head>
+
+<body>
+  <h2>GIWA Sepolia — Ammora Swap</h2>
+
+  <button id="connect">Connect MetaMask</button>
+  <button id="prepare" disabled>Prepare & Simulate Swap</button>
+  <button id="execute" disabled>Execute Swap 0.001 WETH</button>
+
+  <pre id="status"></pre>
+
+  <script type="module">
+    import {
+      createWalletClient,
+      createPublicClient,
+      custom,
+      http,
+      formatEther,
+      formatUnits,
+      getAddress,
+      zeroAddress
+    } from 'https://esm.sh/viem@2.56.8'
+
+    const RPC = 'https://sepolia-rpc.giwa.io'
+
+    const CHAIN = {
+      id: 91342,
+      name: 'GIWA Sepolia',
+      nativeCurrency: {
+        name: 'Ether',
+        symbol: 'ETH',
+        decimals: 18
+      },
+      rpcUrls: {
+        default: {
+          http: [RPC]
+        }
+      }
+    }
+
+    const WETH =
+      '0x4200000000000000000000000000000000000006'
+
+    const POOL =
+      '0x253c3e5519ed19a1b0eda86ce7676fa973157830'
+
+    const AUICMP =
+      '0xd034c409aa90d396d987d6718e723b4962852ac6'
+
+    const AMOUNT_IN =
+      1000000000000000n // 0.001 WETH
+
+    const SLIPPAGE_BPS = 50n // 0.5%
+
+    const ERC20_ABI = [
+      {
+        type: 'function',
+        name: 'allowance',
+        inputs: [
+          { name: 'owner', type: 'address' },
+          { name: 'spender', type: 'address' }
+        ],
+        outputs: [
+          { name: '', type: 'uint256' }
+        ],
+        stateMutability: 'view'
+      }
+    ]
+
+    const POOL_ABI = [
+      {
+        type: 'function',
+        name: 'quoteExactInDetailed',
+        inputs: [
+          { name: 'tokenIn', type: 'address' },
+          { name: 'amountIn', type: 'uint256' },
+          { name: 'referrer', type: 'address' }
+        ],
+        outputs: [
+          {
+            name: 'amountOut',
+            type: 'uint256'
+          },
+          {
+            name: 'fees',
+            type: 'tuple',
+            components: [
+              {
+                name: 'protocolFee',
+                type: 'uint256'
+              },
+              {
+                name: 'claimingFee',
+                type: 'uint256'
+              },
+              {
+                name: 'compoundingFee',
+                type: 'uint256'
+              }
+            ]
+          }
+        ],
+        stateMutability: 'view'
+      },
+
+      {
+        type: 'function',
+        name: 'swapExactIn',
+        inputs: [
+          {
+            name: 'tokenIn',
+            type: 'address'
+          },
+          {
+            name: 'amountIn',
+            type: 'uint256'
+          },
+          {
+            name: 'minAmountOut',
+            type: 'uint256'
+          },
+          {
+            name: 'recipient',
+            type: 'address'
+          },
+          {
+            name: 'deadline',
+            type: 'uint256'
+          },
+          {
+            name: 'referrer',
+            type: 'address'
+          }
+        ],
+        outputs: [],
+        stateMutability: 'nonpayable'
+      }
+    ]
+
+    const connectBtn =
+      document.getElementById('connect')
+
+    const prepareBtn =
+      document.getElementById('prepare')
+
+    const executeBtn =
+      document.getElementById('execute')
+
+    const status =
+      document.getElementById('status')
+
+    let walletClient
+    let publicClient
+    let account
+
+    let preparedRequest = null
+    let preparedQuote = null
+
+    function log(message) {
+      status.textContent += message + '\n'
+    }
+
+    function clearLog() {
+      status.textContent = ''
+    }
+
+    connectBtn.onclick = async () => {
+      try {
+        clearLog()
+
+        if (!window.ethereum) {
+          throw new Error(
+            'MetaMask tidak ditemukan.'
+          )
+        }
+
+        walletClient = createWalletClient({
+          chain: CHAIN,
+          transport: custom(window.ethereum)
+        })
+
+        publicClient = createPublicClient({
+          chain: CHAIN,
+          transport: http(RPC)
+        })
+
+        const [address] =
+          await walletClient.requestAddresses()
+
+        account = getAddress(address)
+
+        const chainId =
+          await walletClient.getChainId()
+
+        log('Wallet: ' + account)
+        log('Chain ID: ' + chainId)
+
+        if (chainId !== 91342) {
+          throw new Error(
+            'MetaMask belum berada di GIWA Sepolia.'
+          )
+        }
+
+        const ethBalance =
+          await publicClient.getBalance({
+            address: account
+          })
+
+        log(
+          'ETH balance: ' +
+          formatEther(ethBalance) +
+          ' ETH'
+        )
+
+        const allowance =
+          await publicClient.readContract({
+            address: WETH,
+            abi: ERC20_ABI,
+            functionName: 'allowance',
+            args: [account, POOL]
+          })
+
+        log(
+          'WETH allowance: ' +
+          formatEther(allowance) +
+          ' WETH'
+        )
+
+        if (allowance < AMOUNT_IN) {
+          throw new Error(
+            'Allowance kurang dari 0.001 WETH.'
+          )
+        }
+
+        log('')
+        log('✅ GIWA Sepolia terdeteksi.')
+        log('✅ Wallet terhubung.')
+        log('✅ Allowance mencukupi.')
+
+        prepareBtn.disabled = false
+
+      } catch (err) {
+        console.error(err)
+
+        log(
+          '❌ ' +
+          (err.shortMessage || err.message)
+        )
+      }
+    }
+
+
+    prepareBtn.onclick = async () => {
+      try {
+        prepareBtn.disabled = true
+        executeBtn.disabled = true
+
+        preparedRequest = null
+        preparedQuote = null
+
+        log('')
+        log('==============================')
+        log('PREPARE SWAP')
+        log('==============================')
+
+        log('Input: 0.001 WETH')
+        log('Pool: ' + POOL)
+
+        // Refresh quote
+        const quote =
+          await publicClient.readContract({
+            address: POOL,
+            abi: POOL_ABI,
+            functionName: 'quoteExactInDetailed',
+            args: [
+              WETH,
+              AMOUNT_IN,
+              zeroAddress
+            ]
+          })
+
+        const amountOut = quote[0]
+
+        const minimumAmountOut =
+          amountOut *
+          (10000n - SLIPPAGE_BPS) /
+          10000n
+
+        preparedQuote = {
+          amountOut,
+          minimumAmountOut
+        }
+
+        log('')
+        log(
+          'Fresh quote: ' +
+          formatUnits(amountOut, 9) +
+          ' AUICMP'
+        )
+
+        log(
+          'Minimum output (0.5% slippage): ' +
+          formatUnits(
+            minimumAmountOut,
+            9
+          ) +
+          ' AUICMP'
+        )
+
+        // Fresh block / deadline
+        const block =
+          await publicClient.getBlock()
+
+        const deadline =
+          block.timestamp + 600n
+
+        log(
+          'Current block: ' +
+          block.number
+        )
+
+        log(
+          'Deadline: ' +
+          deadline
+        )
+
+        log('')
+        log(
+          'Simulating swapExactIn...'
+        )
+
+        // READ-ONLY simulation
+        const simulation =
+          await publicClient.simulateContract({
+            address: POOL,
+            abi: POOL_ABI,
+            functionName: 'swapExactIn',
+            account,
+            args: [
+              WETH,
+              AMOUNT_IN,
+              minimumAmountOut,
+              account,
+              deadline,
+              zeroAddress
+            ]
+          })
+
+        preparedRequest =
+          simulation.request
+
+        log('')
+        log(
+          '✅ SIMULATION BERHASIL'
+        )
+
+        log(
+          'Request siap dieksekusi.'
+        )
+
+        log('')
+        log('==============================')
+        log('DETAIL TRANSAKSI')
+        log('==============================')
+        log('To: ' + POOL)
+        log('Input: 0.001 WETH')
+        log(
+          'Minimum output: ' +
+          formatUnits(
+            minimumAmountOut,
+            9
+          ) +
+          ' AUICMP'
+        )
+        log('Recipient: ' + account)
+        log('Slippage: 0.5%')
+
+        log('')
+        log(
+          '⚠️ Simulation PASS.'
+        )
+        log(
+          'Klik Execute hanya jika detail di atas benar.'
+        )
+
+        executeBtn.disabled = false
+
+      } catch (err) {
+        console.error(err)
+
+        log('')
+        log(
+          '❌ SIMULATION GAGAL'
+        )
+
+        log(
+          err.shortMessage ||
+          err.message
+        )
+
+        if (err.details) {
+          log('')
+          log('Details:')
+          log(err.details)
+        }
+
+        prepareBtn.disabled = false
+      }
+    }
+
+
+    executeBtn.onclick = async () => {
+      try {
+        if (!preparedRequest) {
+          throw new Error(
+            'Belum ada simulation request.'
+          )
+        }
+
+        executeBtn.disabled = true
+
+        log('')
+        log('==============================')
+        log('EXECUTE SWAP')
+        log('==============================')
+
+        log(
+          'Meminta konfirmasi MetaMask...'
+        )
+
+        const hash =
+          await walletClient.writeContract(
+            preparedRequest
+          )
+
+        log('')
+        log(
+          '✅ TRANSAKSI DIKIRIM'
+        )
+
+        log(hash)
+
+        log('')
+        log(
+          'Menunggu konfirmasi...'
+        )
+
+        const receipt =
+          await publicClient.waitForTransactionReceipt({
+            hash
+          })
+
+        log('')
+        log(
+          'Status: ' +
+          receipt.status
+        )
+
+        if (receipt.status === 'success') {
+
+          log('')
+          log(
+            '🎉 SWAP BERHASIL!'
+          )
+
+          log('')
+          log(
+            '0.001 WETH → AUICMP'
+          )
+
+          log('')
+          log(
+            'Transaction hash:'
+          )
+
+          log(hash)
+
+        } else {
+
+          log('')
+          log(
+            '❌ TRANSAKSI GAGAL'
+          )
+        }
+
+      } catch (err) {
+        console.error(err)
+
+        log('')
+        log(
+          '❌ EXECUTE GAGAL'
+        )
+
+        log(
+          err.shortMessage ||
+          err.message
+        )
+
+        executeBtn.disabled = false
+      }
+    }
+  </script>
+</body>
+</html>
